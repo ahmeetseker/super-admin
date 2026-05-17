@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 export default defineConfig({
-  base: process.env.NODE_ENV === 'production' ? '/ops/' : '/',
+  base: process.env.BASE_PATH ?? (process.env.NODE_ENV === 'production' ? '/ops/' : '/'),
   plugins: ([
     react(),
     tailwindcss(),
