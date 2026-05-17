@@ -68,15 +68,34 @@ const DEV_PASSWORD = 'password123'
 // refresh while the token is still inside the API's refresh window.
 const REFRESH_LEAD_MS = 5 * 60 * 1000
 
+// Static-host demo mode (GitHub Pages). When VITE_DEMO_AUTH=1:
+// - configureApi is skipped so @landx/data hooks fall back to apiOrMock fixtures
+// - the user starts authenticated with a frozen demo identity
+// - login/logout/refresh become no-ops; no network calls happen
+const DEMO_MODE = import.meta.env.VITE_DEMO_AUTH === '1'
+
+const DEMO_USER: AuthUser = {
+  id: 'demo-super-admin',
+  email: 'demo@super-admin.local',
+  name: 'Demo Admin',
+  role: 'super_admin',
+  tenantId: null,
+}
+const DEMO_TOKEN = 'demo-token'
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Seed from sessionStorage so a tab refresh keeps the session.
-  const persisted = useMemo(() => loadStorage(), [])
-  const [state, setState] = useState<AuthState>(() => ({
-    user: persisted?.user ?? null,
-    token: persisted?.token ?? null,
-    status: persisted ? 'authenticated' : 'idle',
-    error: null,
-  }))
+  const persisted = useMemo(() => (DEMO_MODE ? null : loadStorage()), [])
+  const [state, setState] = useState<AuthState>(() =>
+    DEMO_MODE
+      ? { user: DEMO_USER, token: DEMO_TOKEN, status: 'authenticated', error: null }
+      : {
+          user: persisted?.user ?? null,
+          token: persisted?.token ?? null,
+          status: persisted ? 'authenticated' : 'idle',
+          error: null,
+        },
+  )
   // Track expiresAt separately — not exposed on AuthState (which is shared
   // with consumers) so the contract doesn't widen. Used only for scheduling.
   const [expiresAt, setExpiresAt] = useState<string | null>(persisted?.expiresAt ?? null)
@@ -86,8 +105,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const tokenRef = useRef<string | null>(state.token)
   tokenRef.current = state.token
 
-  // Configure the shared API client exactly once on mount.
+  // Configure the shared API client exactly once on mount. In DEMO_MODE we
+  // intentionally skip configureApi so every @landx/data hook falls through to
+  // its apiOrMock fixture path — there is no backend on a static host.
   useEffect(() => {
+    if (DEMO_MODE) return
     configureApi({
       baseUrl: '/api/v1',
       getToken: () => tokenRef.current,
@@ -95,6 +117,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const login = useCallback(async (input: { email: string; password: string }) => {
+    if (DEMO_MODE) {
+      setState({ user: DEMO_USER, token: DEMO_TOKEN, status: 'authenticated', error: null })
+      return
+    }
     setState((s) => ({ ...s, status: 'loading', error: null }))
     try {
       const res = await apiPost<LoginResponse>('/auth/login', input)
@@ -112,6 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
+    if (DEMO_MODE) {
+      setState({ user: DEMO_USER, token: DEMO_TOKEN, status: 'authenticated', error: null })
+      return
+    }
     // Fire-and-forget logout — the server side is a no-op stub today.
     try {
       await apiPost('/auth/logout')
@@ -127,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // when there's no persisted token. Production builds skip this entirely.
   const autoLoginAttempted = useRef(false)
   useEffect(() => {
+    if (DEMO_MODE) return
     if (autoLoginAttempted.current) return
     if (state.token) return
     if (!import.meta.env.DEV) return
@@ -139,6 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // belongs to a deleted user, fall back to unauthenticated.
   const verifiedRef = useRef(false)
   useEffect(() => {
+    if (DEMO_MODE) return
     if (verifiedRef.current) return
     if (!state.token) return
     verifiedRef.current = true
@@ -160,6 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // event; the dev auto-login `autoLoginAttempted` ref has already flipped,
   // so we don't loop — the user falls back to the login form.
   useEffect(() => {
+    if (DEMO_MODE) return
     if (!state.token || !expiresAt) return
     const expiryMs = Date.parse(expiresAt)
     if (!Number.isFinite(expiryMs)) return
